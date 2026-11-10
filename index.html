@@ -271,30 +271,68 @@ function labelFor(s) {
 }
 
 function buildTree(rows) {
-  let start = 0;
-  if (rows.length && rows[0].some(c => /^\s*(level|lvl|l)\s*\d/i.test(clean(c)))) start = 1;
+  const width = Math.max(0, ...rows.map(r => (r ? r.length : 0)));
+  const head = (rows[0] || []).map(clean);
+  const isLevelHead = c => /^(level|lvl|l)\s*\d+$/i.test(c);
+  const isUrlHead = c => /\b(url|link|address)\b/i.test(c);
+  let start = 0, urlCol = -1, levelCols = [];
+  if (head.some(c => isLevelHead(c) || isUrlHead(c))) {
+    start = 1;
+    urlCol = head.findIndex(isUrlHead);
+    levelCols = head.map((c, j) => j).filter(j => isLevelHead(head[j]));
+  }
+  if (urlCol < 0 && width > 1) {
+    // No header: treat the last column as links if it is mostly full URLs and the first column is not
+    const colVals = j => rows.slice(start).map(r => clean((r || [])[j])).filter(Boolean);
+    const urlShare = v => (v.length ? v.filter(x => /^https?:\/\//i.test(x)).length / v.length : 0);
+    const last = colVals(width - 1), first = colVals(0);
+    if (urlShare(last) > 0.8 && last.length > (rows.length - start) * 0.5 && urlShare(first) < 0.5) urlCol = width - 1;
+  }
+  if (!levelCols.length) levelCols = Array.from({ length: Math.min(width, 12) }, (_, j) => j).filter(j => j !== urlCol);
+
   const top = { name:'Home', children:[] };
   const index = new Map();
   let path = [];
+  // If the first page row fills only the first level column, that page is the site root (e.g. "Homepage").
+  // Values in that column on later rows are then tags, not new top-level pages.
+  let rootMode = false, firstRow = -1;
+  for (let r = start; r < rows.length; r++) {
+    const row = rows[r] || [];
+    const filled = levelCols.filter(col => clean(row[col]));
+    if (!filled.length) continue;
+    firstRow = r;
+    rootMode = filled.length === 1 && filled[0] === levelCols[0];
+    break;
+  }
   for (let r = start; r < rows.length; r++) {
     const row = rows[r] || [];
     let deepest = -1;
-    for (let j = 0; j < COLS; j++) if (clean(row[j])) deepest = j;
+    levelCols.forEach((col, k) => { if (clean(row[col])) deepest = k; });
     if (deepest < 0) continue;
+    if (rootMode && r !== firstRow && deepest === 0) continue;
+    // The page is the deepest filled cell. Cells filled in an unbroken run up to it are its parents.
+    // A filled cell separated from the page by blank cells is treated as a tag (for example a state label).
+    let runStart = deepest;
+    while (runStart > 0 && clean(row[levelCols[runStart - 1]])) runStart--;
+    if (rootMode && r !== firstRow && runStart === 0) runStart = 1;
+    const tags = [];
+    for (let k = 0; k < runStart; k++) { const v = clean(row[levelCols[k]]); if (v) tags.push(v); }
     const next = [];
-    for (let j = 0; j <= deepest; j++) next[j] = clean(row[j]) || path[j] || '(untitled)';
+    for (let k = 0; k <= deepest; k++) next[k] = (k >= runStart ? clean(row[levelCols[k]]) : '') || path[k] || '(untitled)';
     path = next;
     let parent = top, key = '';
-    for (let j = 0; j <= deepest; j++) {
-      key += '\u0001' + path[j];
+    for (let k = 0; k <= deepest; k++) {
+      key += '\u0001' + path[k];
       let n = index.get(key);
       if (!n) {
-        n = { name: labelFor(path[j]), raw: path[j], url: isUrl(path[j]) ? path[j] : null, children: [] };
+        n = { name: labelFor(path[k]), raw: path[k], url: isUrl(path[k]) ? path[k] : null, children: [] };
         parent.children.push(n);
         index.set(key, n);
       }
       parent = n;
     }
+    if (urlCol >= 0 && clean(row[urlCol]) && !parent.url) parent.url = clean(row[urlCol]);
+    if (tags.length) parent.tags = [...new Set([...(parent.tags || []), ...tags])];
   }
   if (top.children.length === 1) return top.children[0];
   return top;
@@ -422,6 +460,7 @@ function select(d) {
     info.append(dt, dd);
   };
   add('Level', d.depth === 0 ? 'Top' : String(d.depth));
+  if (d.data.tags) add('Tag', d.data.tags.join(', '));
   add('Direct child pages', String(d.kids ? d.kids.length : 0));
   add('All pages below', String(d.value - 1));
   if (d.data.url) {
@@ -462,7 +501,7 @@ function runSearch() {
   all.forEach(d => { d.match = false; });
   matches = [];
   if (q.length < 2) { qCount.textContent = ''; update(root); return; }
-  all.forEach(d => { if (d.depth > 0 && (d.data.name + ' ' + (d.data.raw || '')).toLowerCase().includes(q)) { d.match = true; matches.push(d); } });
+  all.forEach(d => { if (d.depth > 0 && (d.data.name + ' ' + (d.data.raw || '') + ' ' + (d.data.tags || []).join(' ')).toLowerCase().includes(q)) { d.match = true; matches.push(d); } });
   all.forEach(d => { if (d.kids) d.children = d.depth < 1 ? d.kids : null; });
   matches.forEach(m => { let p = m.parent; while (p) { p.children = p.kids; p = p.parent; } });
   update(root);
