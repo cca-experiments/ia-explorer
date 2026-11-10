@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Site IA explorer</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root { --ink:#1b1f24; --muted:#5f6b7a; --line:#d9dee5; --bg:#f6f7f9; --accent:#2f6fe0; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; font-family:Inter,system-ui,sans-serif; color:var(--ink); background:var(--bg); }
+  body { display:flex; flex-direction:column; }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:12px 16px; display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; }
+  h1 { font-size:17px; margin:0 8px 0 0; font-weight:600; }
+  .stats { color:var(--muted); font-size:13px; }
+  .group { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .group label { font-size:12px; color:var(--muted); margin-right:2px; }
+  button, .filebtn { font:inherit; font-size:13px; border:1px solid var(--line); background:#fff; color:var(--ink); padding:6px 10px; border-radius:6px; cursor:pointer; }
+  button:hover, .filebtn:hover { border-color:#aab4c2; }
+  button.primary, .filebtn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .search { position:relative; }
+  .search input { font:inherit; font-size:13px; padding:6px 10px; border:1px solid var(--line); border-radius:6px; width:240px; }
+  .search span { font-size:12px; color:var(--muted); margin-left:6px; }
+  .spacer { flex:1; }
+  main { flex:1; position:relative; overflow:hidden; }
+  svg { width:100%; height:100%; display:block; cursor:grab; }
+  svg:active { cursor:grabbing; }
+  .node { cursor:pointer; }
+  .node rect.box { stroke-width:1; }
+  .node.match rect.box { stroke:#e5484d; stroke-width:2.5; }
+  .node.selected rect.box { stroke:var(--ink); stroke-width:2.5; }
+  .node text { font-size:12px; pointer-events:none; }
+  .chip rect { fill:#fff; stroke:rgba(0,0,0,.18); }
+  .chip text { font-size:10.5px; font-weight:600; fill:#3b4552; text-anchor:middle; }
+  path.link { fill:none; stroke:#b8c1cd; stroke-width:1.2; }
+  #panel { position:absolute; right:16px; bottom:16px; width:340px; max-width:calc(100% - 32px); background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px 16px; box-shadow:0 4px 18px rgba(0,0,0,.08); font-size:13px; display:none; }
+  #panel h2 { font-size:15px; margin:0 0 6px; }
+  #panel .crumb { color:var(--muted); font-size:12px; margin-bottom:10px; line-height:1.45; }
+  #panel dl { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:0 0 10px; }
+  #panel dt { color:var(--muted); }
+  #panel dd { margin:0; word-break:break-all; }
+  #panel .row { display:flex; gap:6px; flex-wrap:wrap; }
+  #panel .close { position:absolute; top:8px; right:10px; border:none; background:none; font-size:18px; color:var(--muted); padding:2px 6px; }
+  #legend { position:absolute; left:16px; bottom:16px; background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:12px; display:flex; gap:10px; flex-wrap:wrap; max-width:calc(100% - 32px); }
+  #legend span { display:inline-flex; align-items:center; gap:5px; }
+  #legend i { width:14px; height:10px; border-radius:2px; display:inline-block; border:1px solid rgba(0,0,0,.2); }
+  #help { position:absolute; left:16px; top:12px; color:var(--muted); font-size:12px; background:rgba(246,247,249,.9); padding:4px 6px; border-radius:6px; }
+  #modal { position:fixed; inset:0; background:rgba(20,25,32,.45); display:none; align-items:center; justify-content:center; z-index:10; }
+  #modal .card { background:#fff; border-radius:10px; padding:18px; width:min(680px, 94vw); }
+  #modal h3 { margin:0 0 6px; font-size:16px; }
+  #modal p { margin:0 0 10px; color:var(--muted); font-size:13px; line-height:1.5; }
+  #modal textarea { width:100%; height:260px; font-family:ui-monospace,Menlo,monospace; font-size:12px; border:1px solid var(--line); border-radius:6px; padding:8px; }
+  #modal .row { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
+  #msg { font-size:12px; color:#b42318; }
+  #drop { position:absolute; inset:0; background:rgba(47,111,224,.08); border:3px dashed var(--accent); display:none; align-items:center; justify-content:center; font-size:18px; color:var(--accent); pointer-events:none; }
+  input[type=file] { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Site IA explorer</h1>
+  <span class="stats" id="stats"></span>
+  <div class="spacer"></div>
+  <div class="search">
+    <input id="q" type="search" placeholder="Search pages… (Enter for next)">
+    <span id="qcount"></span>
+  </div>
+  <div class="group">
+    <label>Show levels</label>
+    <button data-depth="1">1</button>
+    <button data-depth="2">2</button>
+    <button data-depth="3">3</button>
+    <button data-depth="99">All</button>
+    <button id="fit">Fit to screen</button>
+  </div>
+  <div class="group">
+    <label class="filebtn primary" for="file">Load spreadsheet</label>
+    <input id="file" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt">
+    <button id="pasteBtn">Paste</button>
+    <button id="refreshBtn">Refresh from sheet</button>
+    <button id="sampleBtn">Sample</button>
+  </div>
+</header>
+<main id="main">
+  <svg id="svg"><g id="zoomLayer"><g id="links"></g><g id="nodes"></g></g></svg>
+  <div id="help">Click a page to open or close it. Drag to move. Scroll to zoom.</div>
+  <div id="legend"></div>
+  <div id="panel">
+    <button class="close" id="panelClose" aria-label="Close">×</button>
+    <h2 id="pTitle"></h2>
+    <div class="crumb" id="pCrumb"></div>
+    <dl id="pInfo"></dl>
+    <div class="row">
+      <button id="pExpand">Open everything below</button>
+      <button id="pCollapse">Close everything below</button>
+    </div>
+  </div>
+  <div id="drop">Drop your spreadsheet to load it</div>
+</main>
+
+<div id="modal">
+  <div class="card">
+    <h3>Paste from your spreadsheet</h3>
+    <p>Select the level columns in Excel or Google Sheets (column A = level 1, B = level 2 and so on), copy, and paste below. Each row is one page. Earlier columns on a row can be filled in or left blank. A header row is optional.</p>
+    <textarea id="pasteArea" placeholder="Types of cancer&#9;Lymphoma&#9;Diagnosing lymphoma&#9;Tests for lymphoma"></textarea>
+    <div class="row"><span id="msg"></span><div class="spacer"></div><button id="pasteCancel">Cancel</button><button class="primary" id="pasteGo">Build tree</button></div>
+  </div>
+</div>
+
+<script>
+/* ===== SETTINGS =====
+   Paste the Google Sheet "Publish to web" CSV link between the quotes.
+   Leave it empty to show the sample data. */
+const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQMJtMUMnxWwtMgzKg1oVP4faKt0VIIT8aLSkfLFbudAPy5rej7ixpgEcevEcZqEsTTu_KuYVjZPaHL/pub?gid=630510010&single=true&output=csv';
+/* ==================== */
+
+const COLS = 10, BOX_W = 210, BOX_H = 26, COL_W = 262, ROW_H = 33;
+const LEVELS = [
+  { name:'Home',     fill:'#111111', stroke:'#111111', text:'#ffffff' },
+  { name:'Level 1',  fill:'#c9dafc', stroke:'#7aa2f0', text:'#0b2a5b' },
+  { name:'Level 2',  fill:'#fff8db', stroke:'#f0d36e', text:'#3d3200' },
+  { name:'Level 3',  fill:'#fde98a', stroke:'#d9b22a', text:'#3d3200' },
+  { name:'Level 4',  fill:'#e3f4e1', stroke:'#8cc489', text:'#18381a' },
+  { name:'Level 5',  fill:'#f3e4fb', stroke:'#c39be0', text:'#3a1a4d' },
+  { name:'Level 6',  fill:'#fde4e1', stroke:'#e79a92', text:'#4d1a14' },
+  { name:'Level 7+', fill:'#e2f3f7', stroke:'#86c3d3', text:'#0f3640' }
+];
+const lv = d => LEVELS[Math.min(d, LEVELS.length - 1)];
+
+/* ---------- Sample data (from the current site structure board) ---------- */
+const SAMPLE = `Types of cancer
+  Acute leukaemia
+  Anal cancer
+  Bladder cancer
+  Bowel cancer
+  Brain tumours
+  Breast cancer
+  Cancer of unknown primary (CUP)
+  Cervical cancer
+  Chronic leukaemia
+  Eye melanoma
+  Gallbladder and bile duct cancers
+  Head and neck cancers
+  Kidney cancer
+  Liver cancer
+  Lung cancer
+  Lymphoma
+    About lymphoma
+    Lymphoma symptoms and risk factors
+    Diagnosing lymphoma
+      Tests for lymphoma
+    Lymphoma treatment
+      Chemotherapy for lymphoma
+      Radiation therapy for lymphoma
+      Other drug therapies for lymphoma
+      Stem cell transplant for lymphoma
+    Life after treatment for lymphoma
+    Questions to ask your doctor about lymphoma
+  Melanoma
+    About melanoma
+    Signs and risk factors of melanoma
+    Diagnosing melanoma
+    Treatment for early melanoma
+    Treatment for advanced melanoma
+    Sun protection
+    Life after treatment for melanoma
+    Questions to ask your doctor about melanoma
+  Mesothelioma
+  Myeloma
+  Neuroendocrine tumours (NETs)
+  Oesophageal cancer
+  Ovarian cancer
+  Pancreatic cancer
+  Primary bone cancer
+  Prostate cancer
+  Rare or less common cancers
+  Skin cancer
+Cancer treatments
+  Chemotherapy
+    About chemotherapy
+    Common questions about chemotherapy
+    Preparing for chemotherapy
+    Chemotherapy treatment
+    Safety precautions for chemotherapy
+    Managing side effects of chemotherapy treatment
+    Other drug therapies
+    Life after chemotherapy
+    Questions to ask your doctor about chemotherapy
+  Hormone therapy
+  Immunotherapy
+  Radiation therapy
+  Surgery
+  Targeted therapy
+  Clinical trials and research
+Managing side effects
+  Breast prostheses and reconstruction
+  Changes in thinking and memory
+  Fatigue
+  Fertility and cancer
+  Hair loss
+  Heart health and cancer
+  Lymphoedema
+  Mouth health and cancer treatment
+  Pain
+  Peripheral neuropathy
+  Sex, intimacy and cancer
+  Taste and smell changes
+Living and coping with cancer
+  Emotions and cancer
+  Complementary therapies
+  Exercise for people living with cancer
+  Nutrition for people living with cancer
+  Talking to kids about cancer
+  Cancer and your finances
+  Cancer, work and you
+  Cancer in the workplace
+  Cancer care and your rights
+  Protecting your health information
+Caring for someone with cancer
+  Your role as a carer
+  How will you feel as a carer?
+  How relationships can change
+  Caring for yourself
+Advanced cancer
+  Living with advanced cancer
+  Palliative care
+  Facing end of life
+  Caring for someone with advanced cancer
+  Grief
+Life after cancer
+  Living well after cancer
+  Just finished treatment
+  Late effects of cancer treatment
+  Living with metastatic cancer
+  Life after cancer: rural
+Understanding cancer
+  Just diagnosed
+  What is cancer?
+  How cancer is treated
+  Making treatment decisions
+  Questions to ask your doctor
+  Looking after yourself
+  Life after treatment
+  Glossary
+  Just diagnosed: rural`;
+
+function sampleRows() {
+  return SAMPLE.split('\n').map(line => {
+    const depth = (line.match(/^ */)[0].length) / 2;
+    const row = new Array(depth).fill('');
+    row.push(line.trim());
+    return row;
+  });
+}
+
+/* ---------- Spreadsheet rows -> tree ---------- */
+const clean = v => (v == null ? '' : String(v).trim());
+const isUrl = s => /^https?:\/\//i.test(s) || /^\/\S*$/.test(s);
+function labelFor(s) {
+  if (!isUrl(s)) return s;
+  try {
+    const u = new URL(s, 'https://example.invalid');
+    const segs = u.pathname.split('/').filter(Boolean);
+    if (!segs.length) return 'Home';
+    let t = decodeURIComponent(segs[segs.length - 1]).replace(/\.(html?|aspx?|php)$/i, '').replace(/[-_]+/g, ' ').trim();
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  } catch (e) { return s; }
+}
+
+function buildTree(rows) {
+  let start = 0;
+  if (rows.length && rows[0].some(c => /^\s*(level|lvl|l)\s*\d/i.test(clean(c)))) start = 1;
+  const top = { name:'Home', children:[] };
+  const index = new Map();
+  let path = [];
+  for (let r = start; r < rows.length; r++) {
+    const row = rows[r] || [];
+    let deepest = -1;
+    for (let j = 0; j < COLS; j++) if (clean(row[j])) deepest = j;
+    if (deepest < 0) continue;
+    const next = [];
+    for (let j = 0; j <= deepest; j++) next[j] = clean(row[j]) || path[j] || '(untitled)';
+    path = next;
+    let parent = top, key = '';
+    for (let j = 0; j <= deepest; j++) {
+      key += '\u0001' + path[j];
+      let n = index.get(key);
+      if (!n) {
+        n = { name: labelFor(path[j]), raw: path[j], url: isUrl(path[j]) ? path[j] : null, children: [] };
+        parent.children.push(n);
+        index.set(key, n);
+      }
+      parent = n;
+    }
+  }
+  if (top.children.length === 1) return top.children[0];
+  return top;
+}
+
+/* ---------- Rendering ---------- */
+const svg = d3.select('#svg'), layer = d3.select('#zoomLayer');
+const gLinks = d3.select('#links'), gNodes = d3.select('#nodes');
+const zoom = d3.zoom().scaleExtent([0.05, 2.5]).on('zoom', e => layer.attr('transform', e.transform));
+svg.call(zoom).on('dblclick.zoom', null);
+const layout = d3.tree().nodeSize([ROW_H, COL_W]).separation((a, b) => a.parent === b.parent ? 1 : 1.2);
+
+let root = null, all = [], uid = 0, selected = null, matches = [], matchIdx = 0;
+
+function load(data) {
+  root = d3.hierarchy(data, d => (d.children && d.children.length ? d.children : null));
+  root.sum(() => 1);
+  all = root.descendants();
+  all.forEach(d => { d.id = ++uid; d.kids = d.children || null; d.match = false; });
+  root.x0 = 0; root.y0 = 0;
+  selected = null; hidePanel();
+  document.getElementById('q').value = ''; document.getElementById('qcount').textContent = '';
+  gNodes.selectAll('*').remove(); gLinks.selectAll('*').remove();
+  const maxDepth = d3.max(all, d => d.depth);
+  document.getElementById('stats').textContent =
+    `${(all.length - 1).toLocaleString()} pages · ${maxDepth} level${maxDepth === 1 ? '' : 's'} deep`;
+  renderLegend(maxDepth);
+  setDepth(1, true);
+}
+
+function renderLegend(maxDepth) {
+  const el = document.getElementById('legend'); el.innerHTML = '';
+  for (let i = 0; i <= Math.min(maxDepth, LEVELS.length - 1); i++) {
+    const s = document.createElement('span');
+    const sw = document.createElement('i');
+    sw.style.background = LEVELS[i].fill; sw.style.borderColor = LEVELS[i].stroke;
+    s.appendChild(sw); s.appendChild(document.createTextNode(i === 0 ? root.data.name : LEVELS[i].name));
+    el.appendChild(s);
+  }
+}
+
+function setDepth(n, refit) {
+  all.forEach(d => { if (d.kids) d.children = d.depth < n ? d.kids : null; });
+  update(root);
+  if (refit) fit();
+}
+
+function toggle(d) { if (!d.kids) return; d.children = d.children ? null : d.kids; update(d); }
+
+const trunc = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+const linkPath = (s, t) => {
+  const sx = s.y + BOX_W, mx = (sx + t.y) / 2;
+  return `M${sx},${s.x}C${mx},${s.x} ${mx},${t.x} ${t.y},${t.x}`;
+};
+
+function update(source) {
+  layout(root);
+  const nodes = root.descendants(), links = root.links();
+  const dur = nodes.length > 700 ? 0 : 250;
+  const sx = source.x0 ?? source.x, sy = source.y0 ?? source.y;
+
+  const node = gNodes.selectAll('g.node').data(nodes, d => d.id);
+  const enter = node.enter().append('g').attr('class', 'node')
+    .attr('transform', `translate(${sy},${sx})`).attr('opacity', 0)
+    .on('click', (e, d) => { e.stopPropagation(); toggle(d); select(d); });
+  enter.append('title');
+  enter.append('rect').attr('class', 'box').attr('y', -BOX_H / 2).attr('width', BOX_W).attr('height', BOX_H).attr('rx', 5);
+  enter.append('text').attr('class', 'label').attr('x', 10).attr('dy', '0.35em');
+  const chip = enter.append('g').attr('class', 'chip').attr('transform', `translate(${BOX_W - 40},${-8})`);
+  chip.append('rect').attr('width', 34).attr('height', 16).attr('rx', 8);
+  chip.append('text').attr('x', 17).attr('y', 11.5);
+
+  const merged = enter.merge(node);
+  merged.classed('match', d => d.match).classed('selected', d => d === selected);
+  merged.select('title').text(d => d.data.raw || d.data.name);
+  merged.select('rect.box').attr('fill', d => lv(d.depth).fill).attr('stroke', d => lv(d.depth).stroke);
+  merged.select('text.label').attr('fill', d => lv(d.depth).text)
+    .attr('font-weight', d => (d.depth <= 1 ? 600 : 400))
+    .text(d => trunc(d.data.name, d.kids ? 27 : 32));
+  merged.select('g.chip').style('display', d => (d.kids ? null : 'none'));
+  merged.select('g.chip text').text(d => (d.children ? '−' : '+' + (d.value - 1)));
+  merged.transition().duration(dur).attr('transform', d => `translate(${d.y},${d.x})`).attr('opacity', 1);
+  node.exit().transition().duration(dur).attr('transform', `translate(${source.y},${source.x})`).attr('opacity', 0).remove();
+
+  const link = gLinks.selectAll('path.link').data(links, d => d.target.id);
+  const lEnter = link.enter().append('path').attr('class', 'link')
+    .attr('d', () => linkPath({ x: sx, y: sy }, { x: sx, y: sy + BOX_W }));
+  lEnter.merge(link).transition().duration(dur).attr('d', d => linkPath(d.source, d.target));
+  link.exit().transition().duration(dur)
+    .attr('d', () => linkPath({ x: source.x, y: source.y }, { x: source.x, y: source.y + BOX_W })).remove();
+
+  nodes.forEach(d => { d.x0 = d.x; d.y0 = d.y; });
+}
+
+function viewSize() { const r = document.getElementById('main').getBoundingClientRect(); return [r.width, r.height]; }
+
+function fit() {
+  const nodes = root.descendants();
+  const x0 = d3.min(nodes, d => d.x) - BOX_H, x1 = d3.max(nodes, d => d.x) + BOX_H;
+  const y0 = d3.min(nodes, d => d.y), y1 = d3.max(nodes, d => d.y) + BOX_W;
+  const [w, h] = viewSize();
+  const k = Math.max(0.05, Math.min(1.2, (w - 60) / (y1 - y0), (h - 100) / (x1 - x0)));
+  const t = d3.zoomIdentity.translate(w / 2 - k * (y0 + y1) / 2, h / 2 - k * (x0 + x1) / 2).scale(k);
+  svg.transition().duration(300).call(zoom.transform, t);
+}
+
+function centreOn(d) {
+  const [w, h] = viewSize();
+  const k = Math.max(d3.zoomTransform(svg.node()).k, 0.8);
+  const t = d3.zoomIdentity.translate(w / 2 - k * (d.y + BOX_W / 2), h / 2 - k * d.x).scale(k);
+  svg.transition().duration(350).call(zoom.transform, t);
+}
+
+/* ---------- Detail panel ---------- */
+function select(d) {
+  selected = d;
+  gNodes.selectAll('g.node').classed('selected', n => n === selected);
+  document.getElementById('pTitle').textContent = d.data.name;
+  document.getElementById('pCrumb').textContent = d.ancestors().reverse().map(a => a.data.name).join('  ›  ');
+  const info = document.getElementById('pInfo'); info.innerHTML = '';
+  const add = (k, v) => {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd');
+    if (v instanceof Node) dd.appendChild(v); else dd.textContent = v;
+    info.append(dt, dd);
+  };
+  add('Level', d.depth === 0 ? 'Top' : String(d.depth));
+  add('Direct child pages', String(d.kids ? d.kids.length : 0));
+  add('All pages below', String(d.value - 1));
+  if (d.data.url) {
+    const a = document.createElement('a');
+    a.href = /^\//.test(d.data.url) ? d.data.url : d.data.url;
+    a.textContent = d.data.url; a.target = '_blank'; a.rel = 'noopener';
+    add('Link', a);
+  }
+  document.getElementById('pExpand').style.display = d.kids ? '' : 'none';
+  document.getElementById('pCollapse').style.display = d.kids ? '' : 'none';
+  document.getElementById('panel').style.display = 'block';
+}
+function hidePanel() { document.getElementById('panel').style.display = 'none'; }
+document.getElementById('panelClose').onclick = () => { selected = null; hidePanel(); update(root); };
+document.getElementById('pExpand').onclick = () => {
+  if (!selected) return;
+  selected.descendants().forEach(n => { n.children = n.kids; });
+  // descendants() only walks open branches, so walk the full list too
+  all.forEach(n => { if (n.kids && n.ancestors().includes(selected)) n.children = n.kids; });
+  update(selected);
+};
+document.getElementById('pCollapse').onclick = () => {
+  if (!selected) return;
+  all.forEach(n => { if (n.kids && n !== selected && n.ancestors().includes(selected)) n.children = null; });
+  selected.children = null;
+  update(selected);
+};
+
+/* ---------- Search ---------- */
+let qTimer = null;
+const qEl = document.getElementById('q'), qCount = document.getElementById('qcount');
+qEl.addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(runSearch, 200); });
+qEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && matches.length) { matchIdx = (matchIdx + 1) % matches.length; showMatch(); }
+});
+function runSearch() {
+  const q = qEl.value.trim().toLowerCase();
+  all.forEach(d => { d.match = false; });
+  matches = [];
+  if (q.length < 2) { qCount.textContent = ''; update(root); return; }
+  all.forEach(d => { if (d.depth > 0 && (d.data.name + ' ' + (d.data.raw || '')).toLowerCase().includes(q)) { d.match = true; matches.push(d); } });
+  all.forEach(d => { if (d.kids) d.children = d.depth < 1 ? d.kids : null; });
+  matches.forEach(m => { let p = m.parent; while (p) { p.children = p.kids; p = p.parent; } });
+  update(root);
+  matchIdx = 0;
+  if (matches.length) showMatch(); else qCount.textContent = 'No matches';
+}
+function showMatch() {
+  qCount.textContent = `${matchIdx + 1} of ${matches.length}`;
+  const d = matches[matchIdx];
+  select(d); centreOn(d);
+}
+
+/* ---------- Controls ---------- */
+document.querySelectorAll('[data-depth]').forEach(b => b.onclick = () => setDepth(+b.dataset.depth, true));
+document.getElementById('fit').onclick = fit;
+document.getElementById('sampleBtn').onclick = () => load(buildTree(sampleRows()));
+
+function rowsFromWorkbook(wb) {
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
+}
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      const tree = buildTree(rowsFromWorkbook(wb));
+      if (!tree.children || !tree.children.length) throw new Error('empty');
+      load(tree);
+    } catch (err) {
+      showModalMessage('That file could not be read as a page list. Check that column A holds level 1, column B level 2, and so on.');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+document.getElementById('file').addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; });
+
+const main = document.getElementById('main'), drop = document.getElementById('drop');
+['dragenter', 'dragover'].forEach(t => main.addEventListener(t, e => { e.preventDefault(); drop.style.display = 'flex'; }));
+['dragleave', 'drop'].forEach(t => main.addEventListener(t, e => { e.preventDefault(); drop.style.display = 'none'; }));
+main.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+
+const modal = document.getElementById('modal'), msg = document.getElementById('msg');
+function showModalMessage(text) { modal.style.display = 'flex'; msg.textContent = text; }
+document.getElementById('pasteBtn').onclick = () => { msg.textContent = ''; modal.style.display = 'flex'; document.getElementById('pasteArea').focus(); };
+document.getElementById('pasteCancel').onclick = () => { modal.style.display = 'none'; };
+document.getElementById('pasteGo').onclick = () => {
+  const text = document.getElementById('pasteArea').value;
+  if (!text.trim()) { msg.textContent = 'Paste some rows first.'; return; }
+  let rows;
+  if (text.includes('\t')) rows = text.replace(/\r/g, '').split('\n').map(l => l.split('\t'));
+  else rows = rowsFromWorkbook(XLSX.read(text, { type: 'string' }));
+  const tree = buildTree(rows);
+  if (!tree.children || !tree.children.length) { msg.textContent = 'No pages found. Check the columns.'; return; }
+  modal.style.display = 'none';
+  load(tree);
+};
+
+window.addEventListener('resize', () => { if (root) fit(); });
+
+const statsEl = document.getElementById('stats');
+async function loadFromSheet() {
+  if (!SHEET_CSV_URL) { load(buildTree(sampleRows())); statsEl.textContent += ' · sample data'; return; }
+  statsEl.textContent = 'Loading from Google Sheet…';
+  try {
+    const url = SHEET_CSV_URL + (SHEET_CSV_URL.includes('?') ? '&' : '?') + 't=' + Date.now();
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    const tree = buildTree(rowsFromWorkbook(XLSX.read(text, { type: 'string' })));
+    if (!tree.children || !tree.children.length) throw new Error('No pages found');
+    load(tree);
+    const now = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    statsEl.textContent += ' · from Google Sheet, loaded ' + now;
+  } catch (err) {
+    statsEl.textContent = 'Could not load the Google Sheet (' + err.message + '). Showing sample data.';
+    load(buildTree(sampleRows()));
+  }
+}
+document.getElementById('refreshBtn').onclick = loadFromSheet;
+document.getElementById('refreshBtn').style.display = SHEET_CSV_URL ? '' : 'none';
+loadFromSheet();
+</script>
+</body>
+</html>
