@@ -31,6 +31,10 @@
   .node { cursor:pointer; }
   .node rect.box { stroke-width:1; }
   .node.match rect.box { stroke:#e5484d; stroke-width:2.5; }
+  .node.context { opacity:.45; }
+  .badge text { font-size:9px; font-weight:700; fill:#fff; text-anchor:middle; letter-spacing:.3px; }
+  button.active { background:var(--ink); border-color:var(--ink); color:#fff; }
+  #legend .pill { color:#fff; font-size:9px; font-weight:700; padding:1px 5px; border-radius:6px; }
   .node.selected rect.box { stroke:var(--ink); stroke-width:2.5; }
   .node text { font-size:12px; pointer-events:none; }
   .chip rect { fill:#fff; stroke:rgba(0,0,0,.18); }
@@ -68,6 +72,7 @@
     <input id="q" type="search" placeholder="Search pages… (Enter for next)">
     <span id="qcount"></span>
   </div>
+  <div class="group" id="versions"></div>
   <div class="group">
     <label>Show levels</label>
     <button data-depth="1">1</button>
@@ -129,6 +134,11 @@ const LEVELS = [
   { name:'Level 7+', fill:'#e2f3f7', stroke:'#86c3d3', text:'#0f3640' }
 ];
 const lv = d => LEVELS[Math.min(d, LEVELS.length - 1)];
+const TERR_COLOURS = { TAS:'#1f7a4d', NT:'#c2581b' };
+const terrOf = n => (n.tags || []).flatMap(t => t.split('/')).map(t => t.trim().toUpperCase()).filter(Boolean);
+const badgeText = n => [...new Set(terrOf(n))].join('/');
+const badgeColour = n => { const t = [...new Set(terrOf(n))]; return t.length === 1 ? (TERR_COLOURS[t[0]] || '#555') : '#5b4bb7'; };
+const badgeW = n => (badgeText(n) ? 8 + badgeText(n).length * 6 : 0);
 
 /* ---------- Sample data (from the current site structure board) ---------- */
 const SAMPLE = `Types of cancer
@@ -372,6 +382,12 @@ function renderLegend(maxDepth) {
     s.appendChild(sw); s.appendChild(document.createTextNode(i === 0 ? root.data.name : LEVELS[i].name));
     el.appendChild(s);
   }
+  if (sourceData) [...territories(sourceData)].sort().forEach(t => {
+    const s = document.createElement('span');
+    const p = document.createElement('b'); p.className = 'pill'; p.textContent = t; p.style.background = TERR_COLOURS[t] || '#555';
+    s.appendChild(p); s.appendChild(document.createTextNode(t === 'TAS' ? 'Tasmania page' : t === 'NT' ? 'Northern Territory page' : t + ' page'));
+    el.appendChild(s);
+  });
 }
 
 function setDepth(n, refit) {
@@ -400,18 +416,24 @@ function update(source) {
     .on('click', (e, d) => { e.stopPropagation(); toggle(d); select(d); });
   enter.append('title');
   enter.append('rect').attr('class', 'box').attr('y', -BOX_H / 2).attr('width', BOX_W).attr('height', BOX_H).attr('rx', 5);
+  const badge = enter.append('g').attr('class', 'badge').attr('transform', 'translate(6,-6)');
+  badge.append('rect').attr('height', 12).attr('rx', 6);
+  badge.append('text').attr('y', 9);
   enter.append('text').attr('class', 'label').attr('x', 10).attr('dy', '0.35em');
   const chip = enter.append('g').attr('class', 'chip').attr('transform', `translate(${BOX_W - 40},${-8})`);
   chip.append('rect').attr('width', 34).attr('height', 16).attr('rx', 8);
   chip.append('text').attr('x', 17).attr('y', 11.5);
 
   const merged = enter.merge(node);
-  merged.classed('match', d => d.match).classed('selected', d => d === selected);
+  merged.classed('match', d => d.match).classed('selected', d => d === selected).classed('context', d => !!d.data.context);
+  merged.select('g.badge').style('display', d => (badgeText(d.data) ? null : 'none'));
+  merged.select('g.badge rect').attr('width', d => badgeW(d.data)).attr('fill', d => badgeColour(d.data));
+  merged.select('g.badge text').attr('x', d => badgeW(d.data) / 2).text(d => badgeText(d.data));
   merged.select('title').text(d => d.data.raw || d.data.name);
   merged.select('rect.box').attr('fill', d => lv(d.depth).fill).attr('stroke', d => lv(d.depth).stroke);
-  merged.select('text.label').attr('fill', d => lv(d.depth).text)
+  merged.select('text.label').attr('x', d => (badgeW(d.data) ? 12 + badgeW(d.data) : 10)).attr('fill', d => lv(d.depth).text)
     .attr('font-weight', d => (d.depth <= 1 ? 600 : 400))
-    .text(d => trunc(d.data.name, d.kids ? 27 : 32));
+    .text(d => trunc(d.data.name, (d.kids ? 27 : 32) - Math.ceil(badgeW(d.data) / 6.5)));
   merged.select('g.chip').style('display', d => (d.kids ? null : 'none'));
   merged.select('g.chip text').text(d => (d.children ? '−' : '+' + (d.value - 1)));
   merged.transition().duration(dur).attr('transform', d => `translate(${d.y},${d.x})`).attr('opacity', 1);
@@ -446,6 +468,61 @@ function centreOn(d) {
   svg.transition().duration(350).call(zoom.transform, t);
 }
 
+/* ---------- Site versions (national, TAS, NT) ---------- */
+let sourceData = null, view = 'all', loadNote = '';
+const VIEW_NAMES = { all:'All', national:'National' };
+
+function copyTree(n, extra) { return { ...n, ...extra, children: (n.children || []).map(c => copyTree(c, extra)) }; }
+function filterTree(n, v, isRoot) {
+  const t = terrOf(n);
+  if (v === 'national') {
+    if (t.length && !isRoot) return null;
+    return { ...n, children: (n.children || []).map(c => filterTree(c, v)).filter(Boolean) };
+  }
+  if (t.includes(v)) return copyTree(n, { context: false });
+  const kids = (n.children || []).map(c => filterTree(c, v)).filter(Boolean);
+  if (kids.length || isRoot) return { ...n, context: true, children: kids };
+  return null;
+}
+function countNodes(n) { return 1 + (n.children || []).reduce((a, c) => a + countNodes(c), 0); }
+function territories(n, set = new Set()) { terrOf(n).forEach(t => set.add(t)); (n.children || []).forEach(c => territories(c, set)); return set; }
+
+function setData(tree) {
+  sourceData = tree;
+  const terrs = [...territories(tree)].sort();
+  if (view !== 'all' && view !== 'national' && !terrs.includes(view)) view = 'all';
+  const box = document.getElementById('versions'); box.innerHTML = '';
+  if (terrs.length) {
+    const lab = document.createElement('label'); lab.textContent = 'Site version'; box.appendChild(lab);
+    ['all', 'national', ...terrs].forEach(v => {
+      const b = document.createElement('button');
+      b.textContent = VIEW_NAMES[v] || v; b.dataset.view = v;
+      b.onclick = () => { view = v; applyView(); };
+      box.appendChild(b);
+    });
+  }
+  applyView();
+}
+
+function applyView() {
+  document.querySelectorAll('#versions button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  const data = view === 'all' ? sourceData : filterTree(sourceData, view, true);
+  load(data);
+  const statsEl = document.getElementById('stats');
+  if (view === 'all') {
+    const tagged = all.filter(d => d.depth > 0 && terrOf(d.data).length).length;
+    statsEl.textContent = `${(all.length - 1).toLocaleString()} pages` + (tagged ? ` · ${tagged} territory pages` : '');
+  } else if (view === 'national') {
+    statsEl.textContent = `National site: ${(all.length - 1).toLocaleString()} pages`;
+  } else {
+    const own = all.filter(d => terrOf(d.data).includes(view) || (d.depth > 0 && !d.data.context)).length;
+    statsEl.textContent = `${view} site: ${own} pages · faded boxes are national pages shown for context`;
+    setDepth(99, true);
+  }
+  if (loadNote) statsEl.textContent += ' · ' + loadNote;
+  renderLegend(d3.max(all, d => d.depth));
+}
+
 /* ---------- Detail panel ---------- */
 function select(d) {
   selected = d;
@@ -460,7 +537,8 @@ function select(d) {
     info.append(dt, dd);
   };
   add('Level', d.depth === 0 ? 'Top' : String(d.depth));
-  if (d.data.tags) add('Tag', d.data.tags.join(', '));
+  if (badgeText(d.data)) add('Site version', badgeText(d.data).replace('/', ' and '));
+  if (d.data.context) add('Note', 'National page, shown for context');
   add('Direct child pages', String(d.kids ? d.kids.length : 0));
   add('All pages below', String(d.value - 1));
   if (d.data.url) {
@@ -517,7 +595,7 @@ function showMatch() {
 /* ---------- Controls ---------- */
 document.querySelectorAll('[data-depth]').forEach(b => b.onclick = () => setDepth(+b.dataset.depth, true));
 document.getElementById('fit').onclick = fit;
-document.getElementById('sampleBtn').onclick = () => load(buildTree(sampleRows()));
+document.getElementById('sampleBtn').onclick = () => { loadNote = 'sample data'; setData(buildTree(sampleRows())); };
 
 function rowsFromWorkbook(wb) {
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -530,7 +608,7 @@ function loadFile(file) {
       const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
       const tree = buildTree(rowsFromWorkbook(wb));
       if (!tree.children || !tree.children.length) throw new Error('empty');
-      load(tree);
+      loadNote = 'from ' + file.name; setData(tree);
     } catch (err) {
       showModalMessage('That file could not be read as a page list. Check that column A holds level 1, column B level 2, and so on.');
     }
@@ -557,14 +635,14 @@ document.getElementById('pasteGo').onclick = () => {
   const tree = buildTree(rows);
   if (!tree.children || !tree.children.length) { msg.textContent = 'No pages found. Check the columns.'; return; }
   modal.style.display = 'none';
-  load(tree);
+  loadNote = 'pasted data'; setData(tree);
 };
 
 window.addEventListener('resize', () => { if (root) fit(); });
 
 const statsEl = document.getElementById('stats');
 async function loadFromSheet() {
-  if (!SHEET_CSV_URL) { load(buildTree(sampleRows())); statsEl.textContent += ' · sample data'; return; }
+  if (!SHEET_CSV_URL) { loadNote = 'sample data'; setData(buildTree(sampleRows())); return; }
   statsEl.textContent = 'Loading from Google Sheet…';
   try {
     const url = SHEET_CSV_URL + (SHEET_CSV_URL.includes('?') ? '&' : '?') + 't=' + Date.now();
@@ -573,12 +651,12 @@ async function loadFromSheet() {
     const text = await res.text();
     const tree = buildTree(rowsFromWorkbook(XLSX.read(text, { type: 'string' })));
     if (!tree.children || !tree.children.length) throw new Error('No pages found');
-    load(tree);
     const now = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    statsEl.textContent += ' · from Google Sheet, loaded ' + now;
+    loadNote = 'from Google Sheet, loaded ' + now;
+    setData(tree);
   } catch (err) {
-    statsEl.textContent = 'Could not load the Google Sheet (' + err.message + '). Showing sample data.';
-    load(buildTree(sampleRows()));
+    loadNote = 'could not load the Google Sheet (' + err.message + '), showing sample data';
+    setData(buildTree(sampleRows()));
   }
 }
 document.getElementById('refreshBtn').onclick = loadFromSheet;
