@@ -175,7 +175,8 @@ const TERR_COLOURS = { TAS:'#1f7a4d', NT:'#c2581b' };
 const terrOf = n => (n.tags || []).flatMap(t => t.split('/')).map(t => t.trim().toUpperCase()).filter(Boolean);
 const badgeText = n => [...new Set(terrOf(n))].join('/');
 const badgeColour = n => { const t = [...new Set(terrOf(n))]; return t.length === 1 ? (TERR_COLOURS[t[0]] || '#555') : '#5b4bb7'; };
-const badgeW = n => (badgeText(n) ? 8 + badgeText(n).length * 6 : 0);
+const badgeCtx = document.createElement('canvas').getContext('2d');
+const badgeW = n => { const t = badgeText(n); if (!t) return 0; badgeCtx.font = '700 9px Inter, system-ui, sans-serif'; return Math.ceil(badgeCtx.measureText(t).width + t.length * 0.3 + 12); };
 
 /* ---------- Sample data (from the current site structure board) ---------- */
 const SAMPLE = `Types of cancer
