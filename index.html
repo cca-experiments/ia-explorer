@@ -122,7 +122,44 @@
 const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQMJtMUMnxWwtMgzKg1oVP4faKt0VIIT8aLSkfLFbudAPy5rej7ixpgEcevEcZqEsTTu_KuYVjZPaHL/pub?gid=630510010&single=true&output=csv';
 /* ==================== */
 
-const COLS = 10, BOX_W = 210, BOX_H = 26, COL_W = 262, ROW_H = 33;
+const COLS = 10, BOX_W = 220, BOX_H = 26, COL_W = 272, LINE_H = 15, PAD_Y = 6, MAX_LINES = 3;
+
+/* Wrap a page title onto up to MAX_LINES lines that fit the box. */
+const measureCtx = document.createElement('canvas').getContext('2d');
+function textWidth(t, bold) { measureCtx.font = `${bold ? 600 : 400} 12px Inter, system-ui, sans-serif`; return measureCtx.measureText(t).width; }
+function wrapTitle(text, width, firstIndent, bold) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  const avail = () => width - (lines.length === 0 ? firstIndent : 0);
+  for (let i = 0; i < words.length; i++) {
+    const trial = line ? line + ' ' + words[i] : words[i];
+    if (textWidth(trial, bold) <= avail() || !line) { line = trial; }
+    else { lines.push(line); line = words[i]; }
+    // break a single word that is wider than the box
+    while (textWidth(line, bold) > avail() && line.length > 1) {
+      let cut = line.length - 1;
+      while (cut > 1 && textWidth(line.slice(0, cut) + '-', bold) > avail()) cut--;
+      lines.push(line.slice(0, cut) + '-'); line = line.slice(cut);
+    }
+  }
+  if (line) lines.push(line);
+  if (lines.length > MAX_LINES) {
+    const kept = lines.slice(0, MAX_LINES);
+    let last = kept[MAX_LINES - 1] + '…';
+    while (textWidth(last, bold) > width && last.length > 2) last = last.slice(0, -2) + '…';
+    kept[MAX_LINES - 1] = last;
+    return kept;
+  }
+  return lines;
+}
+function measureNode(d) {
+  const bold = d.depth <= 1;
+  const right = d.kids ? 48 : 10;
+  const indent = badgeW(d.data) ? badgeW(d.data) + 6 : 0;
+  d.lines = wrapTitle(d.data.name, BOX_W - 10 - right, indent, bold);
+  d.h = Math.max(BOX_H, PAD_Y * 2 + d.lines.length * LINE_H);
+}
 const LEVELS = [
   { name:'Home',     fill:'#111111', stroke:'#111111', text:'#ffffff' },
   { name:'Level 1',  fill:'#c9dafc', stroke:'#7aa2f0', text:'#0b2a5b' },
@@ -353,7 +390,7 @@ const svg = d3.select('#svg'), layer = d3.select('#zoomLayer');
 const gLinks = d3.select('#links'), gNodes = d3.select('#nodes');
 const zoom = d3.zoom().scaleExtent([0.05, 2.5]).on('zoom', e => layer.attr('transform', e.transform));
 svg.call(zoom).on('dblclick.zoom', null);
-const layout = d3.tree().nodeSize([ROW_H, COL_W]).separation((a, b) => a.parent === b.parent ? 1 : 1.2);
+const layout = d3.tree().nodeSize([1, COL_W]).separation((a, b) => (a.h + b.h) / 2 + (a.parent === b.parent ? 7 : 16));
 
 let root = null, all = [], uid = 0, selected = null, matches = [], matchIdx = 0;
 
@@ -361,7 +398,7 @@ function load(data) {
   root = d3.hierarchy(data, d => (d.children && d.children.length ? d.children : null));
   root.sum(() => 1);
   all = root.descendants();
-  all.forEach(d => { d.id = ++uid; d.kids = d.children || null; d.match = false; });
+  all.forEach(d => { d.id = ++uid; d.kids = d.children || null; d.match = false; measureNode(d); });
   root.x0 = 0; root.y0 = 0;
   selected = null; hidePanel();
   document.getElementById('q').value = ''; document.getElementById('qcount').textContent = '';
@@ -415,25 +452,31 @@ function update(source) {
     .attr('transform', `translate(${sy},${sx})`).attr('opacity', 0)
     .on('click', (e, d) => { e.stopPropagation(); toggle(d); select(d); });
   enter.append('title');
-  enter.append('rect').attr('class', 'box').attr('y', -BOX_H / 2).attr('width', BOX_W).attr('height', BOX_H).attr('rx', 5);
+  enter.append('rect').attr('class', 'box').attr('width', BOX_W).attr('rx', 5);
   const badge = enter.append('g').attr('class', 'badge').attr('transform', 'translate(6,-6)');
   badge.append('rect').attr('height', 12).attr('rx', 6);
   badge.append('text').attr('y', 9);
-  enter.append('text').attr('class', 'label').attr('x', 10).attr('dy', '0.35em');
+  enter.append('text').attr('class', 'label');
   const chip = enter.append('g').attr('class', 'chip').attr('transform', `translate(${BOX_W - 40},${-8})`);
   chip.append('rect').attr('width', 34).attr('height', 16).attr('rx', 8);
   chip.append('text').attr('x', 17).attr('y', 11.5);
 
   const merged = enter.merge(node);
   merged.classed('match', d => d.match).classed('selected', d => d === selected).classed('context', d => !!d.data.context);
-  merged.select('g.badge').style('display', d => (badgeText(d.data) ? null : 'none'));
+  merged.select('g.badge').style('display', d => (badgeText(d.data) ? null : 'none')).attr('transform', d => `translate(8,${-d.h / 2 + PAD_Y + 1.5})`);
   merged.select('g.badge rect').attr('width', d => badgeW(d.data)).attr('fill', d => badgeColour(d.data));
   merged.select('g.badge text').attr('x', d => badgeW(d.data) / 2).text(d => badgeText(d.data));
   merged.select('title').text(d => d.data.raw || d.data.name);
-  merged.select('rect.box').attr('fill', d => lv(d.depth).fill).attr('stroke', d => lv(d.depth).stroke);
-  merged.select('text.label').attr('x', d => (badgeW(d.data) ? 12 + badgeW(d.data) : 10)).attr('fill', d => lv(d.depth).text)
+  merged.select('rect.box').attr('y', d => -d.h / 2).attr('height', d => d.h).attr('fill', d => lv(d.depth).fill).attr('stroke', d => lv(d.depth).stroke);
+  merged.select('text.label').attr('fill', d => lv(d.depth).text)
     .attr('font-weight', d => (d.depth <= 1 ? 600 : 400))
-    .text(d => trunc(d.data.name, (d.kids ? 27 : 32) - Math.ceil(badgeW(d.data) / 6.5)));
+    .each(function (d) {
+      const t = d3.select(this); t.selectAll('tspan').remove();
+      const top = -d.h / 2 + PAD_Y + 11;
+      d.lines.forEach((ln, i) => {
+        t.append('tspan').attr('x', 10 + (i === 0 && badgeW(d.data) ? badgeW(d.data) + 6 : 0)).attr('y', top + i * LINE_H).text(ln);
+      });
+    });
   merged.select('g.chip').style('display', d => (d.kids ? null : 'none'));
   merged.select('g.chip text').text(d => (d.children ? '−' : '+' + (d.value - 1)));
   merged.transition().duration(dur).attr('transform', d => `translate(${d.y},${d.x})`).attr('opacity', 1);
@@ -453,7 +496,7 @@ function viewSize() { const r = document.getElementById('main').getBoundingClien
 
 function fit() {
   const nodes = root.descendants();
-  const x0 = d3.min(nodes, d => d.x) - BOX_H, x1 = d3.max(nodes, d => d.x) + BOX_H;
+  const x0 = d3.min(nodes, d => d.x - d.h / 2) - 10, x1 = d3.max(nodes, d => d.x + d.h / 2) + 10;
   const y0 = d3.min(nodes, d => d.y), y1 = d3.max(nodes, d => d.y) + BOX_W;
   const [w, h] = viewSize();
   const k = Math.max(0.05, Math.min(1.2, (w - 60) / (y1 - y0), (h - 100) / (x1 - x0)));
@@ -661,6 +704,8 @@ async function loadFromSheet() {
   }
 }
 document.getElementById('refreshBtn').onclick = loadFromSheet;
+// Re-measure titles once the web font has loaded, so wrapping matches what is drawn
+if (document.fonts) document.fonts.ready.then(() => { if (root) { all.forEach(measureNode); update(root); } });
 document.getElementById('refreshBtn').style.display = SHEET_CSV_URL ? '' : 'none';
 loadFromSheet();
 </script>
