@@ -316,19 +316,18 @@ function buildTree(rows) {
   }
   for (let r = start; r < rows.length; r++) {
     const row = rows[r] || [];
-    let deepest = -1;
-    levelCols.forEach((col, k) => { if (clean(row[col])) deepest = k; });
-    if (deepest < 0) continue;
-    if (rootMode && r !== firstRow && deepest === 0) continue;
-    // The page is the deepest filled cell. Cells filled in an unbroken run up to it are its parents.
-    // A filled cell separated from the page by blank cells is treated as a tag (for example a state label).
-    let runStart = deepest;
-    while (runStart > 0 && clean(row[levelCols[runStart - 1]])) runStart--;
-    if (rootMode && r !== firstRow && runStart === 0) runStart = 1;
+    const cells = levelCols.map(col => clean(row[col]));
+    // After the root row, a value in the first column is a site version tag (e.g. TAS, NT), not a page.
     const tags = [];
-    for (let k = 0; k < runStart; k++) { const v = clean(row[levelCols[k]]); if (v) tags.push(v); }
+    if (rootMode && r !== firstRow && cells[0]) { tags.push(cells[0]); cells[0] = ''; }
+    // The page is the end of the first unbroken run of filled cells. Text further right, after a blank cell, is a note.
+    const runStart = cells.findIndex(Boolean);
+    if (runStart < 0) continue;
+    let deepest = runStart;
+    while (deepest + 1 < cells.length && cells[deepest + 1]) deepest++;
+    const notes = cells.slice(deepest + 1).filter(Boolean);
     const next = [];
-    for (let k = 0; k <= deepest; k++) next[k] = (k >= runStart ? clean(row[levelCols[k]]) : '') || path[k] || '(untitled)';
+    for (let k = 0; k <= deepest; k++) next[k] = (k >= runStart ? cells[k] : '') || path[k] || '(untitled)';
     path = next;
     let parent = top, key = '';
     for (let k = 0; k <= deepest; k++) {
@@ -343,6 +342,7 @@ function buildTree(rows) {
     }
     if (urlCol >= 0 && clean(row[urlCol]) && !parent.url) parent.url = clean(row[urlCol]);
     if (tags.length) parent.tags = [...new Set([...(parent.tags || []), ...tags])];
+    if (notes.length) parent.notes = [...(parent.notes || []), ...notes];
   }
   if (top.children.length === 1) return top.children[0];
   return top;
@@ -538,7 +538,8 @@ function select(d) {
   };
   add('Level', d.depth === 0 ? 'Top' : String(d.depth));
   if (badgeText(d.data)) add('Site version', badgeText(d.data).replace('/', ' and '));
-  if (d.data.context) add('Note', 'National page, shown for context');
+  if (d.data.notes) add('Note in sheet', d.data.notes.join('; '));
+  if (d.data.context) add('Shown because', 'National page above a ' + view + ' page');
   add('Direct child pages', String(d.kids ? d.kids.length : 0));
   add('All pages below', String(d.value - 1));
   if (d.data.url) {
