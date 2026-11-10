@@ -32,7 +32,7 @@
   .node rect.box { stroke-width:1; }
   .node.match rect.box { stroke:#e5484d; stroke-width:2.5; }
   .node.context { opacity:.45; }
-  .badge text { font-size:9px; font-weight:700; fill:#fff; text-anchor:middle; letter-spacing:.3px; }
+  .node .badge text { font-size:9px; font-weight:700; fill:#fff; text-anchor:middle; letter-spacing:.3px; }
   button.active { background:var(--ink); border-color:var(--ink); color:#fff; }
   #legend .pill { color:#fff; font-size:9px; font-weight:700; padding:1px 5px; border-radius:6px; }
   .node.selected rect.box { stroke:var(--ink); stroke-width:2.5; }
@@ -455,8 +455,8 @@ function update(source) {
   enter.append('title');
   enter.append('rect').attr('class', 'box').attr('width', BOX_W).attr('rx', 5);
   const badge = enter.append('g').attr('class', 'badge').attr('transform', 'translate(6,-6)');
-  badge.append('rect').attr('height', 12).attr('rx', 6);
-  badge.append('text').attr('y', 9);
+  badge.append('rect').attr('height', 14).attr('rx', 7);
+  badge.append('text').attr('y', 10.3);
   enter.append('text').attr('class', 'label');
   const chip = enter.append('g').attr('class', 'chip').attr('transform', `translate(${BOX_W - 40},${-8})`);
   chip.append('rect').attr('width', 34).attr('height', 16).attr('rx', 8);
@@ -464,7 +464,7 @@ function update(source) {
 
   const merged = enter.merge(node);
   merged.classed('match', d => d.match).classed('selected', d => d === selected).classed('context', d => !!d.data.context);
-  merged.select('g.badge').style('display', d => (badgeText(d.data) ? null : 'none')).attr('transform', d => `translate(8,${-d.h / 2 + PAD_Y + 1.5})`);
+  merged.select('g.badge').style('display', d => (badgeText(d.data) ? null : 'none')).attr('transform', d => `translate(8,${-d.h / 2 + PAD_Y + 0.5})`);
   merged.select('g.badge rect').attr('width', d => badgeW(d.data)).attr('fill', d => badgeColour(d.data));
   merged.select('g.badge text').attr('x', d => badgeW(d.data) / 2).text(d => badgeText(d.data));
   merged.select('title').text(d => d.data.raw || d.data.name);
